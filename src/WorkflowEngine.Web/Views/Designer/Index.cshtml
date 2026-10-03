@@ -1,0 +1,273 @@
+@model WorkflowEngine.Domain.Entities.Workflow
+@{
+    ViewData["Title"] = "Designer - " + Model.Name;
+    Layout = null;
+}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <style>
+        body { margin: 0; font-family: Arial; }
+        #palette { width: 220px; background: #f8f9fa; border-right: 1px solid #ddd; padding: 10px; height: 100vh; overflow-y: auto; float: left; }
+        #canvasWrap { margin-left: 220px; margin-right: 300px; position: relative; height: 100vh; background: #fdfdfd; overflow: auto; }
+        #canvas { position: relative; width: 3000px; height: 3000px; background-image: radial-gradient(#ddd 1px, transparent 1px); background-size: 20px 20px; }
+        #configPanel { width: 300px; background: #f8f9fa; border-left: 1px solid #ddd; padding: 10px; height: 100vh; overflow-y: auto; position: fixed; right: 0; top: 0; }
+        .palette-item { padding: 8px; margin-bottom: 6px; background: #fff; border: 1px solid #ccc; border-radius: 6px; cursor: grab; }
+        .node { position: absolute; width: 150px; background: #fff; border: 2px solid #0d6efd; border-radius: 8px; padding: 6px; cursor: move; user-select: none; }
+        .node .title { font-weight: bold; font-size: 12px; }
+        .node .type { font-size: 10px; color: #666; }
+        .node .port { width: 12px; height: 12px; background: #0d6efd; border-radius: 50%; display: inline-block; cursor: crosshair; }
+        .node.selected { border-color: #dc3545; }
+        .port-label { font-size: 10px; color: #888; }
+        #toolbar { position: fixed; top: 0; left: 220px; right: 300px; background: #343a40; color: #fff; padding: 8px 16px; z-index: 10; }
+        #toolbar button { margin-right: 8px; }
+        #edges { position: absolute; top: 0; left: 0; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="palette">
+        <h5>Node Palette</h5>
+        <div class="text-muted small">Drag onto canvas</div>
+        <div class="palette-item" draggable="true" data-type="trigger.manual" data-name="Manual Trigger">▶ Manual Trigger</div>
+        <div class="palette-item" draggable="true" data-type="trigger.api" data-name="API Trigger">▶ API Trigger</div>
+        <div class="palette-item" draggable="true" data-type="trigger.scheduler" data-name="Scheduler Trigger">▶ Scheduler Trigger</div>
+        <div class="palette-item" draggable="true" data-type="action.log" data-name="Log">≡ Log Action</div>
+        <div class="palette-item" draggable="true" data-type="action.http" data-name="HTTP Request">⇄ HTTP Request</div>
+        <div class="palette-item" draggable="true" data-type="action.delay" data-name="Delay">⏱ Delay</div>
+        <div class="palette-item" draggable="true" data-type="condition" data-name="Condition">⑂ Condition</div>
+        <div class="palette-item" draggable="true" data-type="end" data-name="End">■ End</div>
+    </div>
+
+    <div id="toolbar">
+        <strong>@Model.Name</strong>
+        <button class="btn btn-sm btn-success" id="btnSave">Save</button>
+        <button class="btn btn-sm btn-warning" id="btnValidate">Validate</button>
+        <button class="btn btn-sm btn-primary" id="btnExecute">Execute</button>
+        <a class="btn btn-sm btn-outline-light" asp-controller="Workflows" asp-action="Details" asp-route-id="@Model.Id">Back</a>
+        <span id="status" class="ms-3"></span>
+    </div>
+
+    <div id="canvasWrap" style="margin-top: 44px;">
+        <svg id="edges" width="3000" height="3000"></svg>
+        <div id="canvas" style="margin-top:-3000px;"></div>
+    </div>
+
+    <div id="configPanel" style="margin-top:44px;">
+        <h5>Node Properties</h5>
+        <div id="configEmpty" class="text-muted">Select a node to configure it.</div>
+        <div id="configForm" style="display:none;">
+            <div class="mb-2"><label>Name</label><input id="cfgName" class="form-control form-control-sm" /></div>
+            <div id="cfgFields"></div>
+            <button class="btn btn-sm btn-danger mt-2" id="btnDeleteNode">Delete Node</button>
+        </div>
+    </div>
+
+    <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script>
+        const workflowId = '@Model.Id';
+        let nodes = [];   // {nodeKey, nodeType, name, config:{}, x, y}
+        let edges = [];   // {sourceNodeKey, targetNodeKey, sourcePort}
+        let selectedNode = null;
+        let pendingSource = null; // {nodeKey, port}
+
+        const fieldsByType = {
+            'action.log': [{ key: 'message', label: 'Message', placeholder: 'Hello {name}' }],
+            'action.http': [
+                { key: 'url', label: 'URL', placeholder: 'https://example.com' },
+                { key: 'method', label: 'Method', placeholder: 'GET' },
+                { key: 'body', label: 'Body (JSON)', placeholder: '{}' }
+            ],
+            'action.delay': [{ key: 'milliseconds', label: 'Delay (ms)', placeholder: '1000', number: true }],
+            'trigger.scheduler': [{ key: 'cron', label: 'Cron', placeholder: '0 * * * *' }],
+            'condition': [
+                { key: 'variable', label: 'Variable', placeholder: 'status' },
+                { key: 'operator', label: 'Operator (==, !=, >, <, contains)', placeholder: '==' },
+                { key: 'value', label: 'Value', placeholder: 'ok' }
+            ]
+        };
+
+        function nodeByKey(key) { return nodes.find(n => n.nodeKey === key); }
+
+        function render() {
+            const $c = $('#canvas').empty();
+            nodes.forEach(n => {
+                const isCondition = n.nodeType === 'condition';
+                const $el = $(`<div class="node ${selectedNode === n.nodeKey ? 'selected' : ''}" data-key="${n.nodeKey}"></div>`)
+                    .css({ left: n.x, top: n.y });
+                $el.append(`<div class="title">${n.name}</div><div class="type">${n.nodeType}</div>`);
+                $el.append(`<div>In: <span class="port port-in" data-key="${n.nodeKey}"></span></div>`);
+                if (isCondition) {
+                    $el.append(`<div>Out <span class="port-label">true</span>: <span class="port port-out" data-key="${n.nodeKey}" data-port="true"></span></div>`);
+                    $el.append(`<div>Out <span class="port-label">false</span>: <span class="port port-out" data-key="${n.nodeKey}" data-port="false"></span></div>`);
+                } else if (n.nodeType !== 'end') {
+                    $el.append(`<div>Out: <span class="port port-out" data-key="${n.nodeKey}"></span></div>`);
+                }
+                $c.append($el);
+            });
+            drawEdges();
+        }
+
+        function nodeCenter(key, portEl) {
+            const $n = $(`.node[data-key="${key}"]`);
+            if (!$n.length) return null;
+            const off = $('#canvas').offset();
+            const p = portEl ? portEl.offset() : $n.offset();
+            return {
+                x: (portEl ? p.left - off.left + 6 : p.left - off.left + $n.outerWidth() / 2),
+                y: (portEl ? p.top - off.top + 6 : p.top - off.top + $n.outerHeight() / 2)
+            };
+        }
+
+        function drawEdges() {
+            const svg = document.getElementById('edges');
+            svg.innerHTML = '';
+            edges.forEach(e => {
+                const src = nodeByKey(e.sourceNodeKey);
+                const tgt = nodeByKey(e.targetNodeKey);
+                if (!src || !tgt) return;
+                const srcPort = e.sourcePort
+                    ? $(`.node[data-key="${src.nodeKey}"] .port-out[data-port="${e.sourcePort}"]`)[0]
+                    : $(`.node[data-key="${src.nodeKey}"] .port-out`)[0];
+                const inPort = $(`.node[data-key="${tgt.nodeKey}"] .port-in`)[0];
+                const a = nodeCenter(src.nodeKey, srcPort);
+                const b = nodeCenter(tgt.nodeKey, inPort);
+                if (!a || !b) return;
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', a.x); line.setAttribute('y1', a.y);
+                line.setAttribute('x2', b.x); line.setAttribute('y2', b.y);
+                line.setAttribute('stroke', '#0d6efd'); line.setAttribute('stroke-width', '2');
+                svg.appendChild(line);
+            });
+        }
+
+        // Palette drag
+        $('.palette-item').on('dragstart', function (ev) {
+            ev.originalEvent.dataTransfer.setData('type', $(this).data('type'));
+            ev.originalEvent.dataTransfer.setData('name', $(this).data('name'));
+        });
+        $('#canvas').on('dragover', ev => ev.preventDefault());
+        $('#canvas').on('drop', function (ev) {
+            ev.preventDefault();
+            const type = ev.originalEvent.dataTransfer.getData('type');
+            const name = ev.originalEvent.dataTransfer.getData('name');
+            if (!type) return;
+            const off = $(this).offset();
+            nodes.push({
+                nodeKey: crypto.randomUUID().slice(0, 8),
+                nodeType: type, name: name, config: {},
+                x: ev.originalEvent.clientX - off.left - 75,
+                y: ev.originalEvent.clientY - off.top - 30
+            });
+            render();
+        });
+
+        // Move nodes
+        let drag = null;
+        $(document).on('mousedown', '.node .title, .node .type', function (ev) {
+            const key = $(this).closest('.node').data('key');
+            drag = { key, dx: ev.pageX - $(this).closest('.node').offset().left, dy: ev.pageY - $(this).closest('.node').offset().top };
+        });
+        $(document).on('mousemove', function (ev) {
+            if (!drag) return;
+            const n = nodeByKey(drag.key);
+            const off = $('#canvas').offset();
+            n.x = ev.pageX - off.left - drag.dx;
+            n.y = ev.pageY - off.top - drag.dy;
+            $(`.node[data-key="${n.nodeKey}"]`).css({ left: n.x, top: n.y });
+            drawEdges();
+        });
+        $(document).on('mouseup', () => drag = null);
+
+        // Select node
+        $(document).on('click', '.node', function (ev) {
+            if ($(ev.target).hasClass('port')) return;
+            selectedNode = $(this).data('key');
+            render();
+            showConfig(selectedNode);
+        });
+
+        function showConfig(key) {
+            const n = nodeByKey(key);
+            if (!n) return;
+            $('#configEmpty').hide();
+            $('#configForm').show();
+            $('#cfgName').val(n.name).off('input').on('input', function () { n.name = $(this).val(); render(); });
+            const $f = $('#cfgFields').empty();
+            (fieldsByType[n.nodeType] || []).forEach(f => {
+                $f.append(`<div class="mb-2"><label>${f.label}</label><input class="form-control form-control-sm" data-fkey="${f.key}" placeholder="${f.placeholder}" value="${n.config[f.key] ?? ''}" type="${f.number ? 'number' : 'text'}" /></div>`);
+            });
+            $f.find('input').on('input', function () { n.config[$(this).data('fkey')] = $(this).val(); });
+        }
+
+        // Connect ports
+        $(document).on('click', '.port-out', function () {
+            pendingSource = { nodeKey: $(this).data('key'), port: $(this).data('port') || null };
+            $('#status').text('Click a target "In" port...');
+        });
+        $(document).on('click', '.port-in', function () {
+            if (!pendingSource) return;
+            edges.push({ sourceNodeKey: pendingSource.nodeKey, targetNodeKey: $(this).data('key'), sourcePort: pendingSource.port });
+            pendingSource = null;
+            $('#status').text('');
+            drawEdges();
+        });
+
+        $('#btnDeleteNode').on('click', function () {
+            if (!selectedNode) return;
+            nodes = nodes.filter(n => n.nodeKey !== selectedNode);
+            edges = edges.filter(e => e.sourceNodeKey !== selectedNode && e.targetNodeKey !== selectedNode);
+            selectedNode = null;
+            $('#configForm').hide(); $('#configEmpty').show();
+            render();
+        });
+
+        function toDto() {
+            return {
+                nodes: nodes.map(n => ({
+                    nodeKey: n.nodeKey, nodeType: n.nodeType, name: n.name,
+                    configurationJson: JSON.stringify(n.config), x: n.x, y: n.y
+                })),
+                edges: edges
+            };
+        }
+
+        $('#btnSave').on('click', function () {
+            $.ajax({
+                url: `/api/designer/${workflowId}/save`, method: 'POST',
+                contentType: 'application/json', data: JSON.stringify(toDto()),
+                success: r => $('#status').text(`Saved (${r.nodes} nodes, ${r.edges} edges)`),
+                error: x => $('#status').text('Save failed: ' + x.responseText)
+            });
+        });
+
+        $('#btnValidate').on('click', function () {
+            $.ajax({
+                url: `/api/designer/${workflowId}/validate`, method: 'POST',
+                success: r => $('#status').text(r.valid ? '✓ Valid' : '✗ ' + r.errors.join('; ')),
+                error: () => $('#status').text('Validate failed')
+            });
+        });
+
+        $('#btnExecute').on('click', function () {
+            $.ajax({
+                url: `/api/designer/${workflowId}/execute`, method: 'POST',
+                success: r => $('#status').text(`Execution: ${r.status}${r.error ? ' — ' + r.error : ''}`),
+                error: x => $('#status').text('Execute failed: ' + (x.responseJSON?.error || x.responseText))
+            });
+        });
+
+        // Load existing graph
+        $.getJSON(`/api/designer/${workflowId}/graph`, function (g) {
+            nodes = g.nodes.map(n => ({
+                nodeKey: n.nodeKey, nodeType: n.nodeType, name: n.name,
+                config: n.configurationJson ? JSON.parse(n.configurationJson) : {},
+                x: n.x, y: n.y
+            }));
+            edges = g.edges;
+            render();
+        });
+    </script>
+</body>
+</html>

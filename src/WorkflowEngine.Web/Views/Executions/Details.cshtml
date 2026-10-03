@@ -1,0 +1,48 @@
+@model WorkflowEngine.Domain.Entities.WorkflowExecution
+@{
+    ViewData["Title"] = "Execution Details";
+}
+<h2>Execution Details</h2>
+<dl class="row mt-3">
+    <dt class="col-sm-2">Workflow</dt><dd class="col-sm-10">@Model.Workflow?.Name</dd>
+    <dt class="col-sm-2">Status</dt><dd class="col-sm-10">@Model.Status</dd>
+    <dt class="col-sm-2">Started</dt><dd class="col-sm-10">@Model.StartedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</dd>
+    <dt class="col-sm-2">Finished</dt><dd class="col-sm-10">@Model.FinishedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</dd>
+    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+    {
+        <dt class="col-sm-2">Error</dt><dd class="col-sm-10 text-danger">@Model.ErrorMessage</dd>
+    }
+</dl>
+
+<h4>Node Executions</h4>
+<table class="table table-sm">
+    <thead><tr><th>Node</th><th>Type</th><th>Status</th><th>Attempts</th><th>Duration</th><th>Output</th></tr></thead>
+    <tbody>
+        @foreach (var n in Model.NodeExecutions)
+        {
+            var dur = n.FinishedAt.HasValue ? (n.FinishedAt.Value - n.StartedAt).TotalMilliseconds + "ms" : "-";
+            <tr>
+                <td>@n.WorkflowNodeId</td>
+                <td><code>@n.NodeType</code></td>
+                <td>@n.Status</td>
+                <td>@n.Attempt</td>
+                <td>@dur</td>
+                <td><code class="small">@(n.OutputJson?.Length > 80 ? n.OutputJson.Substring(0, 80) + "..." : n.OutputJson)</code></td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+<h4>Logs</h4>
+<table class="table table-sm table-borderless">
+    <tbody>
+        @foreach (var l in Model.Logs)
+        {
+            <tr>
+                <td class="text-muted small" style="width:120px;">@l.Timestamp.ToLocalTime().ToString("HH:mm:ss.fff")</td>
+                <td style="width:80px;"><span class="badge @(l.Level == WorkflowEngine.Domain.Enums.LogLevel.Error ? "bg-danger" : "bg-info")">@l.Level</span></td>
+                <td>@l.Message</td>
+            </tr>
+        }
+    </tbody>
+</table>

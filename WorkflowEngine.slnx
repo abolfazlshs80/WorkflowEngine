@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WorkflowEngine.Application/WorkflowEngine.Application.csproj" />
+    <Project Path="src/WorkflowEngine.Domain/WorkflowEngine.Domain.csproj" />
+    <Project Path="src/WorkflowEngine.Infrastructure/WorkflowEngine.Infrastructure.csproj" />
+    <Project Path="src/WorkflowEngine.Web/WorkflowEngine.Web.csproj" />
+  </Folder>
+</Solution>

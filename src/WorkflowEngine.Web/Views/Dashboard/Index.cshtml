@@ -1,0 +1,18 @@
+@model Dictionary<string, int>
+@{
+    ViewData["Title"] = "Dashboard";
+}
+<h2>Dashboard</h2>
+<div class="row mt-4">
+    @foreach (var stat in Model)
+    {
+        <div class="col-md-3 mb-3">
+            <div class="card text-center shadow-sm">
+                <div class="card-body">
+                    <h1 class="display-5">@stat.Value</h1>
+                    <p class="text-muted">@stat.Key</p>
+                </div>
+            </div>
+        </div>
+    }
+</div>

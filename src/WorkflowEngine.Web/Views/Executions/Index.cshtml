@@ -1,0 +1,22 @@
+@model List<WorkflowEngine.Domain.Entities.WorkflowExecution>
+@{
+    ViewData["Title"] = "Execution History";
+}
+<h2>Execution History</h2>
+<table class="table table-hover mt-3">
+    <thead><tr><th>Workflow</th><th>Status</th><th>Started</th><th>Finished</th><th>Duration</th><th></th></tr></thead>
+    <tbody>
+        @foreach (var e in Model)
+        {
+            var duration = e.FinishedAt.HasValue ? (e.FinishedAt.Value - e.StartedAt).TotalSeconds + "s" : "-";
+            <tr>
+                <td>@e.Workflow?.Name</td>
+                <td><span class="badge @(e.Status == WorkflowEngine.Domain.Enums.ExecutionStatus.Completed ? "bg-success" : e.Status == WorkflowEngine.Domain.Enums.ExecutionStatus.Failed ? "bg-danger" : "bg-secondary")">@e.Status</span></td>
+                <td>@e.StartedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                <td>@e.FinishedAt?.ToLocalTime().ToString("HH:mm:ss")</td>
+                <td>@duration</td>
+                <td><a asp-action="Details" asp-route-id="@e.Id" class="btn btn-sm btn-outline-primary">Details</a></td>
+            </tr>
+        }
+    </tbody>
+</table>

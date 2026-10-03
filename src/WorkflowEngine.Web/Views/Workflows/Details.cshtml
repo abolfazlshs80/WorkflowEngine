@@ -1,0 +1,45 @@
+@model WorkflowEngine.Domain.Entities.Workflow
+@{
+    ViewData["Title"] = Model.Name;
+}
+<h2>@Model.Name <span class="badge bg-secondary">@Model.Status</span></h2>
+<p class="text-muted">@Model.Description</p>
+<div class="mb-3">
+    <a asp-controller="Designer" asp-action="Index" asp-route-id="@Model.Id" class="btn btn-outline-info">Open Designer</a>
+    <a asp-action="Edit" asp-route-id="@Model.Id" class="btn btn-outline-secondary">Edit</a>
+</div>
+
+<h4>Nodes (@Model.Nodes.Count)</h4>
+<table class="table table-sm">
+    <thead><tr><th>Name</th><th>Type</th><th>Position</th></tr></thead>
+    <tbody>
+        @foreach (var n in Model.Nodes)
+        {
+            <tr><td>@n.Name</td><td><code>@n.NodeType</code></td><td>@n.PositionX, @n.PositionY</td></tr>
+        }
+    </tbody>
+</table>
+
+<h4>Edges (@Model.Edges.Count)</h4>
+<table class="table table-sm">
+    <thead><tr><th>From</th><th>Port</th><th>To</th></tr></thead>
+    <tbody>
+        @foreach (var e in Model.Edges)
+        {
+            var from = Model.Nodes.FirstOrDefault(n => n.Id == e.SourceNodeId)?.Name;
+            var to = Model.Nodes.FirstOrDefault(n => n.Id == e.TargetNodeId)?.Name;
+            <tr><td>@from</td><td>@(e.SourcePort ?? "-")</td><td>@to</td></tr>
+        }
+    </tbody>
+</table>
+
+<h4>Recent Executions</h4>
+<table class="table table-sm">
+    <thead><tr><th>Started</th><th>Status</th><th>Finished</th><th></th></tr></thead>
+    <tbody>
+        @foreach (var e in Model.Executions)
+        {
+            <tr><td>@e.StartedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td><td>@e.Status</td><td>@e.FinishedAt?.ToLocalTime().ToString("HH:mm:ss")</td><td><a asp-controller="Executions" asp-action="Details" asp-route-id="@e.Id">View</a></td></tr>
+        }
+    </tbody>
+</table>
