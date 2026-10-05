@@ -15,15 +15,21 @@
         #canvas { position: relative; width: 3000px; height: 3000px; background-image: radial-gradient(#ddd 1px, transparent 1px); background-size: 20px 20px; }
         #configPanel { width: 300px; background: #f8f9fa; border-left: 1px solid #ddd; padding: 10px; height: 100vh; overflow-y: auto; position: fixed; right: 0; top: 0; }
         .palette-item { padding: 8px; margin-bottom: 6px; background: #fff; border: 1px solid #ccc; border-radius: 6px; cursor: grab; }
-        .node { position: absolute; width: 150px; background: #fff; border: 2px solid #0d6efd; border-radius: 8px; padding: 6px; cursor: move; user-select: none; }
+        .node { position: absolute; z-index: 1; width: 150px; background: #fff; border: 2px solid #0d6efd; border-radius: 8px; padding: 6px; cursor: move; user-select: none; }
         .node .title { font-weight: bold; font-size: 12px; }
         .node .type { font-size: 10px; color: #666; }
-        .node .port { width: 12px; height: 12px; background: #0d6efd; border-radius: 50%; display: inline-block; cursor: crosshair; }
+        .node .port { width: 16px; height: 16px; background: #0d6efd; border-radius: 50%; display: inline-block; cursor: crosshair; margin: 0 4px; vertical-align: middle; }
+        .node .port:hover { background: #dc3545; transform: scale(1.3); }
+        .node .port-row { min-height: 24px; cursor: crosshair; }
+        .node .port-row:hover { background: #eef5ff; }
+        .port-connecting { background: #dc3545 !important; }
         .node.selected { border-color: #dc3545; }
         .port-label { font-size: 10px; color: #888; }
         #toolbar { position: fixed; top: 0; left: 220px; right: 300px; background: #343a40; color: #fff; padding: 8px 16px; z-index: 10; }
         #toolbar button { margin-right: 8px; }
-        #edges { position: absolute; top: 0; left: 0; pointer-events: none; }
+        #edges { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 0; }
+        #edges .edge-hit { stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+        #edges .edge-hit:hover, #edges .edge-hit:focus { stroke: rgba(220, 53, 69, .35); outline: none; }
     </style>
 </head>
 <body>
@@ -50,8 +56,9 @@
     </div>
 
     <div id="canvasWrap" style="margin-top: 44px;">
-        <svg id="edges" width="3000" height="3000"></svg>
-        <div id="canvas" style="margin-top:-3000px;"></div>
+        <div id="canvas">
+            <svg id="edges" width="3000" height="3000"></svg>
+        </div>
     </div>
 
     <div id="configPanel" style="margin-top:44px;">
@@ -91,18 +98,19 @@
         function nodeByKey(key) { return nodes.find(n => n.nodeKey === key); }
 
         function render() {
-            const $c = $('#canvas').empty();
+            const $c = $('#canvas');
+            $c.find('.node').remove();
             nodes.forEach(n => {
                 const isCondition = n.nodeType === 'condition';
                 const $el = $(`<div class="node ${selectedNode === n.nodeKey ? 'selected' : ''}" data-key="${n.nodeKey}"></div>`)
                     .css({ left: n.x, top: n.y });
                 $el.append(`<div class="title">${n.name}</div><div class="type">${n.nodeType}</div>`);
-                $el.append(`<div>In: <span class="port port-in" data-key="${n.nodeKey}"></span></div>`);
+                $el.append(`<div class="port-row port-in-row">In: <span class="port port-in" data-key="${n.nodeKey}"></span></div>`);
                 if (isCondition) {
-                    $el.append(`<div>Out <span class="port-label">true</span>: <span class="port port-out" data-key="${n.nodeKey}" data-port="true"></span></div>`);
-                    $el.append(`<div>Out <span class="port-label">false</span>: <span class="port port-out" data-key="${n.nodeKey}" data-port="false"></span></div>`);
+                    $el.append(`<div class="port-row port-out-row" data-port="true">Out <span class="port-label">true</span>: <span class="port port-out" data-key="${n.nodeKey}" data-port="true"></span></div>`);
+                    $el.append(`<div class="port-row port-out-row" data-port="false">Out <span class="port-label">false</span>: <span class="port port-out" data-key="${n.nodeKey}" data-port="false"></span></div>`);
                 } else if (n.nodeType !== 'end') {
-                    $el.append(`<div>Out: <span class="port port-out" data-key="${n.nodeKey}"></span></div>`);
+                    $el.append(`<div class="port-row port-out-row">Out: <span class="port port-out" data-key="${n.nodeKey}"></span></div>`);
                 }
                 $c.append($el);
             });
@@ -113,52 +121,88 @@
             const $n = $(`.node[data-key="${key}"]`);
             if (!$n.length) return null;
             const off = $('#canvas').offset();
-            const p = portEl ? portEl.offset() : $n.offset();
+            const p = portEl ? $(portEl).offset() : $n.offset();
             return {
-                x: (portEl ? p.left - off.left + 6 : p.left - off.left + $n.outerWidth() / 2),
-                y: (portEl ? p.top - off.top + 6 : p.top - off.top + $n.outerHeight() / 2)
+                x: (portEl ? p.left - off.left + 8 : p.left - off.left + $n.outerWidth() / 2),
+                y: (portEl ? p.top - off.top + 8 : p.top - off.top + $n.outerHeight() / 2)
             };
         }
 
         function drawEdges() {
             const svg = document.getElementById('edges');
             svg.innerHTML = '';
-            edges.forEach(e => {
+            edges.forEach((e, index) => {
                 const src = nodeByKey(e.sourceNodeKey);
                 const tgt = nodeByKey(e.targetNodeKey);
                 if (!src || !tgt) return;
-                const srcPort = e.sourcePort
+                const srcPort = e.sourcePort !== null && e.sourcePort !== undefined && e.sourcePort !== ''
                     ? $(`.node[data-key="${src.nodeKey}"] .port-out[data-port="${e.sourcePort}"]`)[0]
                     : $(`.node[data-key="${src.nodeKey}"] .port-out`)[0];
                 const inPort = $(`.node[data-key="${tgt.nodeKey}"] .port-in`)[0];
                 const a = nodeCenter(src.nodeKey, srcPort);
                 const b = nodeCenter(tgt.nodeKey, inPort);
                 if (!a || !b) return;
+                const hitLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                hitLine.setAttribute('x1', a.x); hitLine.setAttribute('y1', a.y);
+                hitLine.setAttribute('x2', b.x); hitLine.setAttribute('y2', b.y);
+                hitLine.setAttribute('class', 'edge-hit');
+                hitLine.setAttribute('data-edge-index', index);
+                hitLine.setAttribute('tabindex', '0');
+                hitLine.setAttribute('role', 'button');
+                hitLine.setAttribute('aria-label', `Delete connection from ${src.name} to ${tgt.name}`);
+                const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+                title.textContent = `Click to delete connection: ${src.name} → ${tgt.name}`;
+                hitLine.appendChild(title);
+                svg.appendChild(hitLine);
+
                 const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                 line.setAttribute('x1', a.x); line.setAttribute('y1', a.y);
                 line.setAttribute('x2', b.x); line.setAttribute('y2', b.y);
                 line.setAttribute('stroke', '#0d6efd'); line.setAttribute('stroke-width', '2');
+                line.setAttribute('pointer-events', 'none');
                 svg.appendChild(line);
             });
         }
+
+        function deleteEdge(index) {
+            if (!Number.isInteger(index) || index < 0 || index >= edges.length) return;
+            edges.splice(index, 1);
+            drawEdges();
+            $('#status').text('Connection deleted. Save to keep this change.');
+        }
+
+        $('#edges').on('click', '.edge-hit', function (ev) {
+            ev.stopPropagation();
+            deleteEdge(Number($(this).attr('data-edge-index')));
+        });
+        $('#edges').on('keydown', '.edge-hit', function (ev) {
+            if (ev.key !== 'Enter' && ev.key !== ' ') return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            deleteEdge(Number($(this).attr('data-edge-index')));
+        });
 
         // Palette drag
         $('.palette-item').on('dragstart', function (ev) {
             ev.originalEvent.dataTransfer.setData('type', $(this).data('type'));
             ev.originalEvent.dataTransfer.setData('name', $(this).data('name'));
+            ev.originalEvent.dataTransfer.effectAllowed = 'copy';
         });
-        $('#canvas').on('dragover', ev => ev.preventDefault());
-        $('#canvas').on('drop', function (ev) {
+        $('#canvasWrap').on('dragover dragenter', function (ev) {
+            ev.preventDefault();
+            ev.originalEvent.dataTransfer.dropEffect = 'copy';
+        });
+        $('#canvasWrap').on('drop', function (ev) {
             ev.preventDefault();
             const type = ev.originalEvent.dataTransfer.getData('type');
             const name = ev.originalEvent.dataTransfer.getData('name');
             if (!type) return;
-            const off = $(this).offset();
+            const canvasOff = $('#canvas').offset();
             nodes.push({
                 nodeKey: crypto.randomUUID().slice(0, 8),
                 nodeType: type, name: name, config: {},
-                x: ev.originalEvent.clientX - off.left - 75,
-                y: ev.originalEvent.clientY - off.top - 30
+                x: ev.originalEvent.pageX - canvasOff.left - 75,
+                y: ev.originalEvent.pageY - canvasOff.top - 30
             });
             render();
         });
@@ -166,7 +210,7 @@
         // Move nodes
         let drag = null;
         $(document).on('mousedown', '.node .title, .node .type', function (ev) {
-            const key = $(this).closest('.node').data('key');
+            const key = $(this).closest('.node').attr('data-key');
             drag = { key, dx: ev.pageX - $(this).closest('.node').offset().left, dy: ev.pageY - $(this).closest('.node').offset().top };
         });
         $(document).on('mousemove', function (ev) {
@@ -182,8 +226,8 @@
 
         // Select node
         $(document).on('click', '.node', function (ev) {
-            if ($(ev.target).hasClass('port')) return;
-            selectedNode = $(this).data('key');
+            if ($(ev.target).closest('.port-row').length) return;
+            selectedNode = $(this).attr('data-key');
             render();
             showConfig(selectedNode);
         });
@@ -202,16 +246,51 @@
         }
 
         // Connect ports
-        $(document).on('click', '.port-out', function () {
-            pendingSource = { nodeKey: $(this).data('key'), port: $(this).data('port') || null };
+        $(document).on('click', '.port-out-row', function (ev) {
+            ev.stopPropagation();
+            $('.port-connecting').removeClass('port-connecting');
+            $(this).find('.port-out').addClass('port-connecting');
+            pendingSource = {
+                nodeKey: $(this).closest('.node').attr('data-key'),
+                port: $(this).attr('data-port') || null
+            };
             $('#status').text('Click a target "In" port...');
         });
-        $(document).on('click', '.port-in', function () {
-            if (!pendingSource) return;
-            edges.push({ sourceNodeKey: pendingSource.nodeKey, targetNodeKey: $(this).data('key'), sourcePort: pendingSource.port });
+        $(document).on('click', '.port-in-row', function (ev) {
+            ev.stopPropagation();
+            if (!pendingSource) {
+                $('#status').text('Click an "Out" port first.');
+                return;
+            }
+            const targetNodeKey = $(this).closest('.node').attr('data-key');
+            if (pendingSource.nodeKey === targetNodeKey) {
+                $('#status').text('Choose a different target node.');
+                return;
+            }
+            const exists = edges.some(e =>
+                e.sourceNodeKey === pendingSource.nodeKey &&
+                e.targetNodeKey === targetNodeKey &&
+                (e.sourcePort || null) === pendingSource.port);
+            if (exists) {
+                $('#status').text('These ports are already connected.');
+                return;
+            }
+            const sourceNode = nodeByKey(pendingSource.nodeKey);
+            const targetNode = nodeByKey(targetNodeKey);
+            edges.push({ sourceNodeKey: pendingSource.nodeKey, targetNodeKey, sourcePort: pendingSource.port });
+            $('.port-connecting').removeClass('port-connecting');
             pendingSource = null;
-            $('#status').text('');
             drawEdges();
+            $('#status').text(`Connected: ${sourceNode.name} → ${targetNode.name}`);
+        });
+        $(document).on('click', function (ev) {
+            if (!$(ev.target).closest('.port-row').length) {
+                $('.port-connecting').removeClass('port-connecting');
+                if (pendingSource) {
+                    pendingSource = null;
+                    $('#status').text('');
+                }
+            }
         });
 
         $('#btnDeleteNode').on('click', function () {
@@ -233,13 +312,17 @@
             };
         }
 
-        $('#btnSave').on('click', function () {
-            $.ajax({
+        function saveGraph() {
+            return $.ajax({
                 url: `/api/designer/${workflowId}/save`, method: 'POST',
-                contentType: 'application/json', data: JSON.stringify(toDto()),
-                success: r => $('#status').text(`Saved (${r.nodes} nodes, ${r.edges} edges)`),
-                error: x => $('#status').text('Save failed: ' + x.responseText)
+                contentType: 'application/json', data: JSON.stringify(toDto())
             });
+        }
+
+        $('#btnSave').on('click', function () {
+            saveGraph()
+                .done(r => $('#status').text(`Saved (${r.nodes} nodes, ${r.edges} edges)`))
+                .fail(x => $('#status').text('Save failed: ' + x.responseText));
         });
 
         $('#btnValidate').on('click', function () {
@@ -251,11 +334,16 @@
         });
 
         $('#btnExecute').on('click', function () {
-            $.ajax({
-                url: `/api/designer/${workflowId}/execute`, method: 'POST',
-                success: r => $('#status').text(`Execution: ${r.status}${r.error ? ' — ' + r.error : ''}`),
-                error: x => $('#status').text('Execute failed: ' + (x.responseJSON?.error || x.responseText))
-            });
+            $('#status').text('Saving workflow before execution...');
+            saveGraph()
+                .done(() => {
+                    $.ajax({
+                        url: `/api/designer/${workflowId}/execute`, method: 'POST',
+                        success: r => $('#status').text(`Execution: ${r.status}${r.error ? ' — ' + r.error : ''}`),
+                        error: x => $('#status').text('Execute failed: ' + (x.responseJSON?.error || x.responseText))
+                    });
+                })
+                .fail(x => $('#status').text('Could not save workflow: ' + x.responseText));
         });
 
         // Load existing graph
